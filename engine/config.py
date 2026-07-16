@@ -1,0 +1,18 @@
+WIDTH = 1400
+HEIGHT = 900
+
+TITLE = "Soft Robotic Simulator"
+
+FPS = 120
+
+
+BACKGROUND = (25,25,30)
+
+GRID_COLOR = (50,50,55)
+
+AXIS_COLOR = (120,120,120)
+
+TEXT_COLOR = (220,220,220)
+
+GRID_SIZE = 50
+
