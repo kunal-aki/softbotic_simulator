@@ -4,6 +4,8 @@ from engine.config import *
 from engine.renderer import Renderer
 from engine.camera import Camera
 
+from objects.world import World
+
 
 
 class App:
@@ -20,7 +22,7 @@ class App:
 
 
         pygame.display.set_caption(
-            TITLE
+            TITLE+" v0.3"
         )
 
 
@@ -29,7 +31,7 @@ class App:
 
         self.font=pygame.font.SysFont(
             "arial",
-            20
+            18
         )
 
 
@@ -41,42 +43,86 @@ class App:
         self.camera=Camera()
 
 
+        self.world=World()
+
+
+        # test particle
+
+        self.world.add_particle(
+            (700,200)
+        )
+
+
         self.running=True
 
+        self.dragging=False
 
-
-    def update(self):
-
-        pass
+        self.last_mouse=(0,0)
 
 
 
     def draw_grid(self):
 
-        for x in range(
-            0,
-            WIDTH,
-            GRID_SIZE
-        ):
+        spacing=GRID_SIZE*self.camera.zoom
+
+
+        if spacing<10:
+            return
+
+
+        ox=(self.camera.x*self.camera.zoom)%spacing
+
+        oy=(self.camera.y*self.camera.zoom)%spacing
+
+
+        x=-spacing
+
+        while x<WIDTH+spacing:
 
             self.renderer.draw_line(
                 GRID_COLOR,
-                (x,0),
-                (x,HEIGHT)
+                (x+ox,0),
+                (x+ox,HEIGHT)
             )
 
+            x+=spacing
 
-        for y in range(
-            0,
-            HEIGHT,
-            GRID_SIZE
-        ):
+
+
+        y=-spacing
+
+        while y<HEIGHT+spacing:
 
             self.renderer.draw_line(
                 GRID_COLOR,
-                (0,y),
-                (WIDTH,y)
+                (0,y+oy),
+                (WIDTH,y+oy)
             )
+
+            y+=spacing
+
+
+
+    def draw_ui(self):
+
+        fps=self.clock.get_fps()
+
+
+        self.renderer.draw_text(
+            self.font,
+            f"FPS: {fps:.1f}",
+            TEXT_COLOR,
+            (10,10)
+        )
+
+
+        self.renderer.draw_text(
+            self.font,
+            "BioSim v0.3 Physics",
+            TEXT_COLOR,
+            (10,30)
+        )
+
 
 
     def render(self):
@@ -89,12 +135,13 @@ class App:
         self.draw_grid()
 
 
-        self.renderer.draw_text(
-            self.font,
-            "BioSim v0.1",
-            TEXT_COLOR,
-            (20,20)
+        self.world.draw(
+            self.renderer,
+            self.camera
         )
+
+
+        self.draw_ui()
 
 
         pygame.display.flip()
@@ -106,10 +153,12 @@ class App:
         while self.running:
 
 
-            self.clock.tick(FPS)
+            dt=self.clock.tick(FPS)/1000
+
 
 
             for event in pygame.event.get():
+
 
                 if event.type==pygame.QUIT:
 
@@ -117,7 +166,62 @@ class App:
 
 
 
-            self.update()
+                elif event.type==pygame.MOUSEBUTTONDOWN:
+
+
+                    if event.button==2:
+
+                        self.dragging=True
+
+                        self.last_mouse=event.pos
+
+
+
+                    elif event.button==4:
+
+                        self.camera.zoom_in()
+
+
+
+                    elif event.button==5:
+
+                        self.camera.zoom_out()
+
+
+
+                elif event.type==pygame.MOUSEBUTTONUP:
+
+
+                    if event.button==2:
+
+                        self.dragging=False
+
+
+
+                elif event.type==pygame.MOUSEMOTION:
+
+
+                    if self.dragging:
+
+                        dx=event.pos[0]-self.last_mouse[0]
+
+                        dy=event.pos[1]-self.last_mouse[1]
+
+
+                        self.camera.move(
+                            dx,
+                            dy
+                        )
+
+
+                        self.last_mouse=event.pos
+
+
+
+            self.world.update(
+                dt
+            )
+
 
             self.render()
 
