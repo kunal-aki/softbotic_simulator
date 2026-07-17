@@ -1,8 +1,8 @@
 import pygame
-from config import *
-from renderer import Renderer
-from camera import Camera
-from world import World
+from engine.config import *
+from engine.renderer import Renderer
+from engine.camera import Camera
+from engine.world import World
 
 class App:
     def __init__(self):
