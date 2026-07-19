@@ -1,58 +1,54 @@
 import math
 
 class Spring:
-    def __init__(self, p1, p2, k=150.0, damping=1.5):
-        self.p1 = p1  # Particle 1
-        self.p2 = p2  # Particle 2
-        self.k = k    # Stiffness constant
+    def __init__(self, p1, p2, k=500.0, damping=5.0):
+        self.p1 = p1
+        self.p2 = p2
+        self.k = k
         self.damping = damping
         
-        # Initial distance becomes the target rest length
+        # Calculate initial 3D Euclidean distance rest length
         dx = self.p2.pos[0] - self.p1.pos[0]
         dy = self.p2.pos[1] - self.p1.pos[1]
-        self.rest_length = math.sqrt(dx*dx + dy*dy)
-        if self.rest_length == 0:
-            self.rest_length = 1.0
+        dz = self.p2.pos[2] - self.p1.pos[2]
+        self.rest_length = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-        self.color = (150, 150, 160)
-
-    def update(self, dt):
-        # 1. Distance vector between particles
+    def update(self):
         dx = self.p2.pos[0] - self.p1.pos[0]
         dy = self.p2.pos[1] - self.p1.pos[1]
-        dist = math.sqrt(dx*dx + dy*dy)
-        if dist == 0:
-            return
+        dz = self.p2.pos[2] - self.p1.pos[2]
+        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-        # 2. Normalize direction
-        nx = dx / dist
-        ny = dy / dist
+        if dist == 0: return
 
-        # 3. Hooke's Law: Force proportional to displacement
+        # 3D Normalizing Vector strings
+        nx, ny, nz = dx / dist, dy / dist, dz / dist
         displacement = dist - self.rest_length
-        spring_force_mag = displacement * self.k
 
-        # 4. Relative velocity projection (Damping)
+        # 3D Velocity vectors
         v1x = self.p1.pos[0] - self.p1.prev_pos[0]
         v1y = self.p1.pos[1] - self.p1.prev_pos[1]
+        v1z = self.p1.pos[2] - self.p1.prev_pos[2]
+
         v2x = self.p2.pos[0] - self.p2.prev_pos[0]
         v2y = self.p2.pos[1] - self.p2.prev_pos[1]
-        
+        v2z = self.p2.pos[2] - self.p2.prev_pos[2]
+
+        # Relative velocity calculation
         rvx = v2x - v1x
         rvy = v2y - v1y
-        damping_force_mag = (rvx * nx + rvy * ny) * self.damping
+        rvz = v2z - v1z
 
-        # Total force magnitude
-        total_force = spring_force_mag + damping_force_mag
+        # Hooke's Law + 3D Viscous Damping
+        spring_force = displacement * self.k
+        damping_force = (rvx * nx + rvy * ny + rvz * nz) * self.damping
+        total_force = spring_force + damping_force
 
-        # Apply forces (equal and opposite reactions)
-        self.p1.apply_force((nx * total_force, ny * total_force))
-        self.p2.apply_force((-nx * total_force, -ny * total_force))
+        fx = nx * total_force
+        fy = ny * total_force
+        fz = nz * total_force
 
-    def draw(self, renderer, camera):
-        p1_screen = camera.world_to_screen(self.p1.pos)
-        p2_screen = camera.world_to_screen(self.p2.pos)
-        width = max(1, int(2 * camera.zoom))
-        renderer.draw_line(self.color, p1_screen, p2_screen, width)
+        self.p1.apply_force((fx, fy, fz))
+        self.p2.apply_force((-fx, -fy, -fz))
 
 
