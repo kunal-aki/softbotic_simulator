@@ -1,94 +1,57 @@
-import pygame
 import math
 
 class Obstacle:
-    def __init__(self, x, y, obstacle_type="circle", r=40.0, w=100.0, h=40.0):
-        self.pos = [x, y]
-        self.type = obstacle_type  # "circle" or "box"
+    def __init__(self, x, y, z=0.0, shape_type="circle", r=55.0, w=180.0, h=50.0, d=150.0):
+        self.pos = [float(x), float(y), float(z)]
+        self.type = shape_type  # "circle" (Sphere in 3D) or "box" (Column in 3D)
         self.radius = r
         self.width = w
         self.height = h
-        self.color = (130, 140, 150) # Industrial grey metallic color
+        self.depth = d  # Z-axis size configuration for 3D state
 
-    def resolve_collision(self, particle):
-        """Pushes particles out of the obstacle walls symmetrically."""
+    def resolve_collision(self, p, is_3d):
+        dx = p.pos[0] - self.pos[0]
+        dy = p.pos[1] - self.pos[1]
+        dz = p.pos[2] - self.pos[2] if is_3d else 0.0
+        
         if self.type == "circle":
-            dx = particle.pos[0] - self.pos[0]
-            dy = particle.pos[1] - self.pos[1]
-            dist = math.sqrt(dx*dx + dy*dy)
-            min_dist = self.radius + particle.radius
-            
-            if dist < min_dist and dist > 0:
-                # Push direction normal
-                nx = dx / dist
-                ny = dy / dist
+            dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+            min_dist = self.radius + 4.0  # Safe boundary padding
+            if dist < min_dist and dist > 0.001:
+                nx, ny, nz = dx / dist, dy / dist, dz / dist if is_3d else 0.0
                 overlap = min_dist - dist
                 
-                # Snap position out of obstacle boundaries
-                particle.pos[0] += nx * overlap
-                particle.pos[1] += ny * overlap
+                p.pos[0] += nx * overlap
+                p.pos[1] += ny * overlap
+                if is_3d: p.pos[2] += nz * overlap
                 
-                # Apply high friction dampening on surface scrub
-                pvx = particle.pos[0] - particle.prev_pos[0]
-                pvy = particle.pos[1] - particle.prev_pos[1]
-                particle.prev_pos[0] = particle.pos[0] - pvx * 0.8
-                particle.prev_pos[1] = particle.pos[1] - pvy * 0.8
+                # Apply localized boundary reflection dampening
+                p.prev_pos[0] = p.pos[0] + (p.pos[0] - p.prev_pos[0]) * 0.25
+                p.prev_pos[1] = p.pos[1] + (p.pos[1] - p.prev_pos[1]) * 0.25
+                if is_3d: p.prev_pos[2] = p.pos[2] + (p.pos[2] - p.prev_pos[2]) * 0.25
 
         elif self.type == "box":
-            half_w = self.width / 2.0
-            half_h = self.height / 2.0
+            hw, hh, hd = self.width / 2.0, self.height / 2.0, self.depth / 2.0
             
-            # Find closest point on box bounds to particle center
-            closest_x = max(self.pos[0] - half_w, min(particle.pos[0], self.pos[0] + half_w))
-            closest_y = max(self.pos[1] - half_h, min(particle.pos[1], self.pos[1] + half_h))
+            # Check overlap logic
+            in_x = abs(dx) < hw
+            in_y = abs(dy) < hh
+            in_z = abs(dz) < hd if is_3d else True
             
-            dx = particle.pos[0] - closest_x
-            dy = particle.pos[1] - closest_y
-            dist = math.sqrt(dx*dx + dy*dy)
-            
-            # Collision happens if particle center is close enough or inside box completely
-            is_inside = (particle.pos[0] > self.pos[0] - half_w and 
-                         particle.pos[0] < self.pos[0] + half_w and 
-                         particle.pos[1] > self.pos[1] - half_h and 
-                         particle.pos[1] < self.pos[1] + half_h)
-                         
-            if dist < particle.radius or is_inside:
-                if is_inside:
-                    # Calculate vector displacements to closest outer edge walls
-                    dl = particle.pos[0] - (self.pos[0] - half_w)
-                    dr = (self.pos[0] + half_w) - particle.pos[0]
-                    dt = particle.pos[1] - (self.pos[1] - half_h)
-                    db = (self.pos[1] + half_h) - particle.pos[1]
-                    
-                    min_edge = min(dl, dr, dt, db)
-                    if min_edge == dl:   particle.pos[0] -= (dl + particle.radius)
-                    elif min_edge == dr: particle.pos[0] += (dr + particle.radius)
-                    elif min_edge == dt: particle.pos[1] -= (dt + particle.radius)
-                    else:                particle.pos[1] += (db + particle.radius)
-                else:
-                    if dist > 0:
-                        particle.pos[0] = closest_x + (dx / dist) * particle.radius
-                        particle.pos[1] = closest_y + (dy / dist) * particle.radius
+            if in_x and in_y and in_z:
+                ox = hw - abs(dx)
+                oy = hh - abs(dy)
+                oz = hd - abs(dz) if is_3d else 99999.0
                 
-                # Damp velocity vector profiles on rigid box wall impacts
-                pvx = particle.pos[0] - particle.prev_pos[0]
-                pvy = particle.pos[1] - particle.prev_pos[1]
-                particle.prev_pos[0] = particle.pos[0] - pvx * 0.8
-                particle.prev_pos[1] = particle.pos[1] - pvy * 0.8
+                # Push back along the shallowest penetration vector axis
+                if ox < oy and (not is_3d or ox < oz):
+                    p.pos[0] += ox if dx > 0 else -ox
+                    p.prev_pos[0] = p.pos[0]
+                elif oy < ox and (not is_3d or oy < oz):
+                    p.pos[1] += oy if dy > 0 else -oy
+                    p.prev_pos[1] = p.pos[1]
+                elif is_3d:
+                    p.pos[2] += oz if dz > 0 else -oz
+                    p.prev_pos[2] = p.pos[2]
 
-    def draw(self, renderer, camera):
-        if self.type == "circle":
-            screen_pos = camera.world_to_screen(self.pos)
-            r = int(self.radius * camera.zoom)
-            if r > 0:
-                pygame.draw.circle(renderer.screen, self.color, screen_pos, r)
-                pygame.draw.circle(renderer.screen, (80, 90, 100), screen_pos, r, 2)
-        elif self.type == "box":
-            top_left = (self.pos[0] - self.width/2, self.pos[1] - self.height/2)
-            tl_screen = camera.world_to_screen(top_left)
-            w = int(self.width * camera.zoom)
-            h = int(self.height * camera.zoom)
-            if w > 0 and h > 0:
-                pygame.draw.rect(renderer.screen, self.color, (tl_screen[0], tl_screen[1], w, h))
-                pygame.draw.rect(renderer.screen, (80, 90, 100), (tl_screen[0], tl_screen[1], w, h), 2)
 
