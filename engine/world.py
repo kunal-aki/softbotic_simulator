@@ -51,33 +51,41 @@ class World:
                 self.grid[key] = []
             self.grid[key].append(p)
 
-    def step(self, dt, substeps=6):
+    def step(self, dt, substeps=8):
         clamped_dt = min(dt, 0.016)
         sdt = clamped_dt / substeps
 
         for _ in range(substeps):
+            # 1. Apply environmental forces
             for p in self.particles:
                 if not getattr(p, 'is_grabbed', False):
                     p.apply_force((self.gravity[0] * p.mass, self.gravity[1] * p.mass, self.gravity[2] * p.mass))
 
+            # 2. Update spring physics
             for s in self.springs: 
                 s.update()
 
+            # 3. Integrate particle positions
             for p in self.particles: 
                 p.update(sdt)
 
+            # 4. Obstacle interactions
             for obs in self.obstacles:
                 for p in self.particles:
                     obs.resolve_collision(p, self.is_3d)
 
+            # 5. Boundary constraints
             self.resolve_constraints()
 
+            # 6. Spatial particle-to-particle collision resolution
             self.update_spatial_grid()
             self.resolve_grid_collisions()
 
+            # 7. Rigid/Soft boundary projections & internal pressure
             for sb in self.soft_bodies:
                 sb.apply_internal_pressure()
                 sb.maintain_volume()
+                sb.solve_inter_body_collisions()
 
     def resolve_constraints(self):
         floor, ceiling = self.sim_height - 100, 100
@@ -112,8 +120,8 @@ class World:
                     p.prev_pos[2] = back_wall + (p.pos[2] - p.prev_pos[2]) * 0.1
 
     def resolve_grid_collisions(self):
-        # Increased separation radius to prevent overlap locking
-        collision_radius = 28.0 if self.is_3d else 24.0
+        # Separation radius to prevent mesh penetration
+        collision_radius = 28.0 if self.is_3d else 22.0
         min_dist_sq = collision_radius * collision_radius
         processed_pairs = set()
 
@@ -145,13 +153,12 @@ class World:
                                     dist = math.sqrt(dist_sq) if dist_sq > 0.0001 else 0.0001
                                     nx, ny, nz = x_dist / dist, y_dist / dist, z_dist / dist
 
-                                    # Full separation displacement prevents bodies from ever sticking together
                                     overlap = (collision_radius - dist) * 0.5
                                     
                                     p1_grabbed = getattr(p1, 'is_grabbed', False)
                                     p2_grabbed = getattr(p2, 'is_grabbed', False)
 
-                                    if not p1.is_static and not p1_grabbed:
+                                    if not getattr(p1, 'is_static', False) and not p1_grabbed:
                                         p1.pos[0] -= nx * overlap
                                         p1.pos[1] -= ny * overlap
                                         p1.prev_pos[0] -= nx * overlap * 0.5
@@ -160,7 +167,7 @@ class World:
                                             p1.pos[2] -= nz * overlap
                                             p1.prev_pos[2] -= nz * overlap * 0.5
 
-                                    if not p2.is_static and not p2_grabbed:
+                                    if not getattr(p2, 'is_static', False) and not p2_grabbed:
                                         p2.pos[0] += nx * overlap
                                         p2.pos[1] += ny * overlap
                                         p2.prev_pos[0] += nx * overlap * 0.5

@@ -28,9 +28,11 @@ camera_target = [1500.0, 1000.0, 0.0]
 angle_x, angle_y = 0.40, -0.50
 zoom_scale = 0.40
 
-# Initial bodies
+# Primary controllable player body
+player_body = SoftBody(world, 1600, 650, z=0.0, shape_type="circle", size=100.0, preset="Water Balloon")
+player_body.is_player = True
+
 SoftBody(world, 1200, 700, z=0.0, shape_type="square", size=120.0, preset="Jello")
-SoftBody(world, 1600, 650, z=0.0, shape_type="circle", size=100.0, preset="Water Balloon")
 
 class UISlider:
     def __init__(self, x, y, w, h, label, min_val, max_val, initial_val):
@@ -113,7 +115,7 @@ def clean_delete_soft_body_via_particle(particle):
             if s.p1 in target_body.particles or s.p2 in target_body.particles:
                 world.springs.remove(s)
     else:
-        if particle in world.particles: 
+        if particle in world.particles:
             world.particles.remove(particle)
         for s in list(world.springs):
             if s.p1 == particle or s.p2 == particle:
@@ -148,6 +150,39 @@ def draw_3d_wire_box(center, size_dims, color, cx, cy, angle=0.0):
     for start, end in indices:
         pygame.draw.line(screen, color, pts[start][:2], pts[end][:2], 2 if angle != 0.0 else 1)
 
+def draw_soft_body_skinned(sb, cx, cy):
+    if len(sb.particles) < 3:
+        return
+
+    ring_pts = sb.particles[1:] if sb.shape_type in ("circle", "sphere") else sb.particles
+    proj_poly = [project_3d_point(p.pos, cx, cy)[:2] for p in ring_pts]
+
+    avg_strain = 0.0
+    if sb.springs:
+        tot_strain = 0.0
+        for s in sb.springs:
+            dx = s.p1.pos[0] - s.p2.pos[0]
+            dy = s.p1.pos[1] - s.p2.pos[1]
+            dz = s.p1.pos[2] - s.p2.pos[2]
+            curr_length = math.sqrt(dx * dx + dy * dy + dz * dz)
+            
+            rest_l = getattr(s, 'rest_length', getattr(s, 'rest_len', 1.0))
+            tot_strain += abs(curr_length - rest_l) / max(1.0, rest_l)
+            
+        avg_strain = min(1.0, (tot_strain / len(sb.springs)) * 3.5)
+
+    base_r = int(0 + avg_strain * 255)
+    base_g = int(191 * (1.0 - avg_strain))
+    base_b = int(255 * (1.0 - avg_strain))
+    
+    if getattr(sb, 'is_player', False):
+        base_g, base_b = 255, 100
+
+    surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    pygame.draw.polygon(surf, (base_r, base_g, base_b, 100), proj_poly)
+    pygame.draw.polygon(surf, (base_r, base_g, base_b, 230), proj_poly, 3)
+    screen.blit(surf, (0, 0))
+
 def draw_ui(fps):
     pygame.draw.rect(screen, (22, 22, 32), (10, 10, 260, 200), border_radius=6)
     screen.blit(font_bold.render("SYSTEM CORE MODULE", True, (0, 255, 180)), (20, 16))
@@ -157,11 +192,13 @@ def draw_ui(fps):
 
     gravity_slider.draw(screen)
 
-    panel_w, panel_h = 480, 320
+    panel_w, panel_h = 480, 360
     px, py = WIDTH - panel_w - 15, 15
     pygame.draw.rect(screen, (22, 22, 32), (px, py, panel_w, panel_h), border_radius=6)
     screen.blit(font_bold.render("WORKSPACE OPERATIONAL KEYBINDS", True, (0, 255, 180)), (px + 15, py + 15))
     controls = [
+        ("WASD / Arrows", "SQUISHY CHARACTER CONTROLLER (Roll / Move)"),
+        ("Spacebar", "Character Impulse Compression Jump"),
         ("V Key", "TOGGLE DIMENSION SYSTEM (Auto-Morphs Everything)"),
         ("C Key", "Spawn Rectangle Matrix (3D Cube / 2D Square)"),
         ("S Key", "Spawn Angular Shape (3D Pyramid / 2D Triangle)"),
@@ -170,6 +207,7 @@ def draw_ui(fps):
         ("O Key", "Spawn Pillar Obstacle"),
         ("I Key", "Spawn Tilted Platform Ramp"),
         ("R Key", "CLEAR ALL OBJECTS FROM SIMULATION ARENA"),
+        ("Delete / Bksp", "Delete selected/hovered soft-body or obstacle"),
         ("Hold D", "Continuous Eraser Brush (Deletes Nodes & Blocks)"),
         ("Left-Drag", "Grab / Manipulate dynamic simulation nodes"),
         ("Mid-Drag", "Flight Camera Track (Shift adjusts Depth layer)")
@@ -177,10 +215,12 @@ def draw_ui(fps):
     curr_y = py + 40
     for k, desc in controls:
         screen.blit(font_bold.render(k, True, (0, 255, 180)), (px + 15, curr_y))
-        screen.blit(font.render(desc, True, (190, 190, 205)), (px + 105, curr_y))
+        screen.blit(font.render(desc, True, (190, 190, 205)), (px + 125, curr_y))
         curr_y += 22
 
 running = True
+jump_triggered = False
+
 while running:
     dt = min(clock.tick(120) / 1000.0, 0.016)
     screen.fill((14, 14, 20))
@@ -190,12 +230,23 @@ while running:
 
     world.gravity[1] = gravity_slider.val
 
+    # Continuous eraser functionality
     if keys[pygame.K_d]:
         etype, element = get_entities_under_mouse(mx, my, cx, cy)
         if etype == "particle":
             clean_delete_soft_body_via_particle(element)
         elif etype == "obstacle":
             world.remove_obstacle(element)
+
+    # Character Controller Inputs (Arrow keys / WASD)
+    move_x = (1.0 if keys[pygame.K_RIGHT] or (keys[pygame.K_d] and not selected_particle) else 0.0) - \
+             (1.0 if keys[pygame.K_LEFT] or (keys[pygame.K_a] and not selected_particle) else 0.0)
+    move_y = (1.0 if keys[pygame.K_DOWN] or (keys[pygame.K_s] and not selected_particle) else 0.0) - \
+             (1.0 if keys[pygame.K_UP] or (keys[pygame.K_w] and not selected_particle) else 0.0)
+    
+    if player_body in world.soft_bodies and hasattr(player_body, 'apply_character_controls'):
+        player_body.apply_character_controls((move_x, move_y, 0.0), jump_trigger=jump_triggered)
+    jump_triggered = False
 
     for event in pygame.event.get():
         if gravity_slider.handle_event(event):
@@ -209,6 +260,18 @@ while running:
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE: 
                 running = False
+            elif event.key in (pygame.K_DELETE, pygame.K_BACKSPACE):
+                if selected_particle:
+                    clean_delete_soft_body_via_particle(selected_particle)
+                    selected_particle = None
+                else:
+                    etype, element = get_entities_under_mouse(mx, my, cx, cy)
+                    if etype == "particle":
+                        clean_delete_soft_body_via_particle(element)
+                    elif etype == "obstacle":
+                        world.remove_obstacle(element)
+            elif event.key == pygame.K_SPACE:
+                jump_triggered = True
             elif event.key == pygame.K_v:
                 world.is_3d = not world.is_3d
                 for sb in list(world.soft_bodies):
@@ -272,7 +335,6 @@ while running:
                 dx = wx - selected_particle.pos[0]
                 dy = wy - selected_particle.pos[1]
 
-                # Translate the whole soft body together so shape doesn't distort
                 parent_body = None
                 for sb in world.soft_bodies:
                     if selected_particle in sb.particles:
@@ -299,6 +361,10 @@ while running:
             pygame.draw.circle(screen, (110, 115, 140), (ox, oy), int(obs.radius * zoom_scale), 2)
         elif obs.type == "box":
             draw_3d_wire_box(obs.pos, [obs.width, obs.height, obs.depth], (110, 115, 140), cx, cy, angle=obs.angle)
+
+    # Render visual soft body skins
+    for sb in world.soft_bodies:
+        draw_soft_body_skinned(sb, cx, cy)
 
     render_queue = []
     for s in world.springs:

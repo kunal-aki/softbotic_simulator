@@ -25,6 +25,7 @@ class SoftBody:
         self.shape_type = shape_type
         self.size = size
         self.preset_name = preset
+        self.is_player = False
 
         p_data = self.PRESETS.get(preset, self.PRESETS["Jello"])
         self.k = p_data["k"]
@@ -34,6 +35,23 @@ class SoftBody:
 
         self.build_mesh(x, y, z)
         world.soft_bodies.append(self)
+
+    def destroy(self):
+        """Cleanly remove soft body particles and springs from the world."""
+        for p in list(self.particles):
+            if p in self.world.particles:
+                self.world.particles.remove(p)
+        for s in list(self.springs):
+            if s in self.world.springs:
+                self.world.springs.remove(s)
+        if self in self.world.soft_bodies:
+            self.world.soft_bodies.remove(self)
+
+    def handle_key_event(self, event):
+        if getattr(event, 'type', None) == getattr(pygame, 'KEYDOWN', None):
+            if event.key in (getattr(pygame, 'K_DELETE', 127), getattr(pygame, 'K_BACKSPACE', 8)):
+                if self.is_player or getattr(self, 'selected', False):
+                    self.destroy()
 
     def build_mesh(self, x, y, z=0.0):
         self.particles.clear()
@@ -168,17 +186,125 @@ class SoftBody:
                 self.particles.append(p)
                 ring.append(p)
                 self.rest_offsets.append([dx, dy, 0.0])
-                # Direct central struts
                 self.springs.append(self.world.add_spring(p, cp, k=self.k * 1.5, damping=self.damping))
             
-            # Rigid internal cross-bracing
             for i in range(segments):
                 self.springs.append(self.world.add_spring(ring[i], ring[(i + 1) % segments], k=self.k, damping=self.damping))
                 self.springs.append(self.world.add_spring(ring[i], ring[(i + 2) % segments], k=self.k * 0.8, damping=self.damping))
                 self.springs.append(self.world.add_spring(ring[i], ring[(i + segments // 2) % segments], k=self.k * 0.6, damping=self.damping))
 
+    def get_boundary_edges(self):
+        """Returns pairs of (p1, p2) forming the outer mesh perimeter."""
+        if not self.particles:
+            return []
+
+        if self.shape_type in ("circle", "triangle"):
+            pts = self.particles[1:]
+            n = len(pts)
+            return [(pts[i], pts[(i + 1) % n]) for i in range(n)]
+
+        elif self.shape_type == "square":
+            indices = [0, 1, 2, 5, 8, 7, 6, 3]
+            pts = [self.particles[i] for i in indices if i < len(self.particles)]
+            n = len(pts)
+            return [(pts[i], pts[(i + 1) % n]) for i in range(n)]
+
+        edges = []
+        for s in self.springs:
+            edges.append((s.p1, s.p2))
+        return edges
+
+    def solve_inter_body_collisions(self):
+        """Point-to-segment surface projection that prevents meshes from passing through each other."""
+        threshold = 20.0  # Outer skin collision margin
+        
+        for other_body in self.world.soft_bodies:
+            if other_body.id == self.id:
+                continue
+
+            other_edges = other_body.get_boundary_edges()
+            if not other_edges:
+                continue
+
+            other_com = other_body.get_center_of_mass()
+
+            for p in self.particles:
+                px, py = p.pos[0], p.pos[1]
+                min_dist = float('inf')
+                best_proj = None
+                best_edge = None
+
+                for e1, e2 in other_edges:
+                    x1, y1 = e1.pos[0], e1.pos[1]
+                    x2, y2 = e2.pos[0], e2.pos[1]
+
+                    dx, dy = x2 - x1, y2 - y1
+                    l2 = dx * dx + dy * dy
+                    if l2 < 1e-6:
+                        continue
+
+                    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l2))
+                    proj_x = x1 + t * dx
+                    proj_y = y1 + t * dy
+
+                    dist_sq = (px - proj_x) ** 2 + (py - proj_y) ** 2
+                    if dist_sq < min_dist:
+                        min_dist = dist_sq
+                        best_proj = (proj_x, proj_y)
+                        best_edge = (e1, e2)
+
+                if min_dist < (threshold * threshold) and best_proj:
+                    dist = math.sqrt(min_dist) + 1e-5
+                    
+                    # Outward vector relative to the target's center of mass
+                    nx = px - other_com[0]
+                    ny = py - other_com[1]
+                    n_len = math.hypot(nx, ny) + 1e-5
+                    nx /= n_len
+                    ny /= n_len
+
+                    overlap = threshold - dist
+                    if overlap > 0:
+                        shift_x = nx * overlap * 0.5
+                        shift_y = ny * overlap * 0.5
+
+                        if not getattr(p, 'is_static', False) and not getattr(p, 'is_grabbed', False):
+                            p.pos[0] += shift_x
+                            p.pos[1] += shift_y
+
+                            # Damp inward movement
+                            vx = p.pos[0] - p.prev_pos[0]
+                            vy = p.pos[1] - p.prev_pos[1]
+                            dot = vx * nx + vy * ny
+                            if dot < 0:
+                                p.prev_pos[0] = p.pos[0] - (vx - dot * nx) * 0.8
+                                p.prev_pos[1] = p.pos[1] - (vy - dot * ny) * 0.8
+
+                        # Push back opposing edge endpoints
+                        e1, e2 = best_edge
+                        if not getattr(e1, 'is_static', False):
+                            e1.pos[0] -= shift_x * 0.25
+                            e1.pos[1] -= shift_y * 0.25
+                        if not getattr(e2, 'is_static', False):
+                            e2.pos[0] -= shift_x * 0.25
+                            e2.pos[1] -= shift_y * 0.25
+
+    def update(self):
+        """Runs soft-body internal shape dynamics and boundary collisions."""
+        self.apply_internal_pressure()
+        self.maintain_volume()
+        self.solve_inter_body_collisions()
+
+    def apply_character_controls(self, move_dir, jump_trigger=False):
+        force_mult = 1200.0
+        for p in self.particles:
+            p.apply_force((move_dir[0] * force_mult, move_dir[1] * force_mult, move_dir[2] * force_mult))
+        
+        if jump_trigger:
+            for p in self.particles:
+                p.apply_force((0.0, -25000.0, 0.0))
+
     def move_body_by_delta(self, dx, dy, dz=0.0):
-        # Translates the whole structure together when grabbed to preserve geometry
         for p in self.particles:
             p.pos[0] += dx
             p.pos[1] += dy
@@ -239,10 +365,10 @@ class SoftBody:
         theta = math.atan2(a10 - a01, a00 + a11)
         cost, sint = math.cos(theta), math.sin(theta)
 
-        restoration_stiffness = 0.08  # Stronger shape recovery
+        restoration_stiffness = 0.08
 
         for i, p in enumerate(self.particles):
-            if p.is_static:
+            if getattr(p, 'is_static', False):
                 continue
 
             rx, ry, rz = self.rest_offsets[i]
