@@ -1,67 +1,39 @@
 WIDTH = 1400
-
 HEIGHT = 900
-
 
 TITLE = "BioSim"
 
-
 FPS = 120
 
+BACKGROUND = (28, 28, 32)
+GRID_COLOR = (55, 55, 60)
+TEXT_COLOR = (225, 225, 225)
+PANEL = (40, 40, 45)
+PANEL_LIGHT = (55, 55, 60)
+PANEL_BORDER = (85, 85, 95)
 
+# UI dimensions (Increased MENU_HEIGHT to fix top bar clipping)
+MENU_HEIGHT = 42
+TOOLBAR_WIDTH = 95
+PROPERTY_WIDTH = 250
+STATUS_HEIGHT = 28
 
-# Colors
+# Viewport dimensions
+VIEWPORT_X = TOOLBAR_WIDTH
+VIEWPORT_Y = MENU_HEIGHT
 
-BACKGROUND = (
-    25,
-    25,
-    30
+VIEWPORT_WIDTH = (
+    WIDTH
+    - TOOLBAR_WIDTH
+    - PROPERTY_WIDTH
 )
 
-
-GRID_COLOR = (
-    50,
-    50,
-    55
+VIEWPORT_HEIGHT = (
+    HEIGHT
+    - MENU_HEIGHT
+    - STATUS_HEIGHT
 )
-
-
-TEXT_COLOR = (
-    220,
-    220,
-    220
-)
-
-
-PANEL_COLOR = (
-    40,
-    40,
-    45
-)
-
-
-BORDER_COLOR = (
-    80,
-    80,
-    90
-)
-
-
-
-# Viewport
 
 GRID_SIZE = 50
-
-
-
-# UI dimensions
-
-MENU_HEIGHT = 28
-
-TOOLBAR_WIDTH = 70
-
-PROPERTY_WIDTH = 270
-
-STATUS_HEIGHT = 25
 
 

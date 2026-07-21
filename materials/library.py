@@ -1,83 +1,112 @@
 class Material:
 
+
     def __init__(
         self,
         name,
-        density,
         stiffness,
-        damping,
-        color
+        density,
+        damping=0.1
     ):
 
-        self.name=name
+        self.name = name
 
-        self.density=density
+        self.stiffness = stiffness
 
-        self.stiffness=stiffness
+        self.density = density
 
-        self.damping=damping
+        self.damping = damping
 
-        self.color=color
+
+
+    def __str__(self):
+
+        return self.name
+
+
 
 
 class MaterialLibrary:
 
+
     def __init__(self):
 
-        self.materials={}
+        self.materials = {}
 
-        self.load_defaults()
+        self.create_default_materials()
 
 
-    def load_defaults(self):
 
-        self.add(
+    def create_default_materials(self):
+
+
+        self.add_material(
+
             Material(
-                "Ecoflex 00-30",
-                1070,
-                25,
-                0.15,
-                (70,180,255)
+                "Silicone",
+                stiffness=0.25,
+                density=1.1,
+                damping=0.15
             )
+
         )
 
-        self.add(
-            Material(
-                "Dragon Skin 20",
-                1120,
-                40,
-                0.18,
-                (255,150,60)
-            )
-        )
 
-        self.add(
-            Material(
-                "TPU",
-                1200,
-                80,
-                0.10,
-                (120,255,120)
-            )
-        )
+        self.add_material(
 
-        self.add(
             Material(
                 "Rubber",
-                1100,
-                60,
-                0.20,
-                (255,80,80)
+                stiffness=0.5,
+                density=1.3,
+                damping=0.2
             )
+
         )
 
 
-    def add(self,material):
+        self.add_material(
 
-        self.materials[material.name]=material
+            Material(
+                "TPU",
+                stiffness=0.8,
+                density=1.2,
+                damping=0.1
+            )
+
+        )
+
+
+        self.add_material(
+
+            Material(
+                "Custom",
+                stiffness=1.0,
+                density=1.0,
+                damping=0.1
+            )
+
+        )
+
+
+
+    def add_material(self, material):
+
+        self.materials[
+            material.name
+        ] = material
+
 
 
     def get(self,name):
 
-        return self.materials.get(name)
+        return self.materials.get(
+            name
+        )
+
+
+
+    def get_all(self):
+
+        return self.materials
+
 
