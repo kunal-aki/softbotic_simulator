@@ -1,15 +1,15 @@
 from ui.panel import Panel
 
 
-class Toolbar(Panel):
+class PropertiesPanel(Panel):
 
     def __init__(self):
 
         super().__init__(
-            0,
+            1130,
             30,
-            70,
-            800,
-            "Tools"
+            270,
+            870,
+            "Properties"
         )
 
