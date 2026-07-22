@@ -1,3 +1,11 @@
+"""
+BioSim v2.0 - Main Entry Point
+"""
+
 from engine.app import App
 
-App().run()
+if __name__ == "__main__":
+    app = App()
+    app.run()
+
+
