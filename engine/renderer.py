@@ -1,110 +1,128 @@
-"""
-BioSim v2.0 - Viewport & Graphics Renderer
-Provides high-level drawing, clipping, grid rendering, and coordinate axes.
-"""
+import numpy as np
+from OpenGL.GL import *
+from OpenGL.GLU import *
 
-import pygame
-from engine.config import (
-    VIEWPORT_X, VIEWPORT_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
-    COLOR_GRID, COLOR_AXIS_X, COLOR_AXIS_Y, COLOR_SELECTION, COLOR_BORDER, GRID_SIZE
-)
+class Renderer3D:
+    """Renders the 3D Grid, Soft Robotic Objects, and Assembly Visuals preserving original aesthetic UI."""
+    
+    def __init__(self, window=None, grid_size=20, grid_spacing=0.5):
+        """
+        Accepts optional parameters so passing arguments like `self.window` or `app` 
+        will not trigger a positional argument mismatch error.
+        """
+        self.window = window
+        self.grid_size = grid_size
+        self.grid_spacing = grid_spacing
 
+    def init_gl(self):
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        
+        # Setup aesthetic soft lighting
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+        
+        glLightfv(GL_LIGHT0, GL_POSITION, (10.0, 20.0, 10.0, 1.0))
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.9, 0.9, 0.95, 1.0))
+        glLightfv(GL_LIGHT0, GL_AMBIENT, (0.3, 0.3, 0.35, 1.0))
 
-class Renderer:
-    def __init__(self, surface):
-        self.surface = surface
+    def render_grid_3d(self):
+        """Renders the 3D Assembly Grid floor (XZ) with elevation/spatial guide ticks."""
+        glDisable(GL_LIGHTING)
+        glLineWidth(1.0)
+        
+        half_size = (self.grid_size * self.grid_spacing) / 2.0
+        
+        glBegin(GL_LINES)
+        # Main Floor Grid (XZ Plane)
+        for i in range(-self.grid_size // 2, self.grid_size // 2 + 1):
+            pos = i * self.grid_spacing
+            
+            # Major vs Minor grid colors for clean aesthetics
+            if i == 0:
+                glColor4f(0.8, 0.2, 0.2, 0.6) # X-Axis Highlight
+            else:
+                glColor4f(0.25, 0.28, 0.35, 0.3)
+                
+            glVertex3f(pos, 0.0, -half_size)
+            glVertex3f(pos, 0.0, half_size)
 
-    def clear(self, color):
-        self.surface.fill(color)
+            if i == 0:
+                glColor4f(0.2, 0.2, 0.8, 0.6) # Z-Axis Highlight
+            else:
+                glColor4f(0.25, 0.28, 0.35, 0.3)
+                
+            glVertex3f(-half_size, 0.0, pos)
+            glVertex3f(half_size, 0.0, pos)
 
-    def set_clip(self, rect):
-        self.surface.set_clip(rect)
+        # 3D Height Guide Posts at corner bounds
+        glColor4f(0.4, 0.4, 0.5, 0.2)
+        for cx in [-half_size, half_size]:
+            for cz in [-half_size, half_size]:
+                glVertex3f(cx, 0.0, cz)
+                glVertex3f(cx, half_size, cz)
+        glEnd()
+        
+        glEnable(GL_LIGHTING)
 
-    def clear_clip(self):
-        self.surface.set_clip(None)
+    def render_soft_body_3d(self, soft_body, is_selected=False):
+        """Renders 3D soft-body objects with pneumatic aesthetics and spring connections."""
+        positions = soft_body.positions
+        
+        # 1. Render 3D Mass Springs
+        glDisable(GL_LIGHTING)
+        glLineWidth(2.0 if not is_selected else 3.5)
+        glBegin(GL_LINES)
+        for spring in soft_body.springs:
+            p1, p2 = positions[spring['node1']], positions[spring['node2']]
+            if is_selected:
+                glColor4f(1.0, 0.8, 0.2, 0.9)
+            elif spring['type'] == 'structural':
+                glColor4f(soft_body.color[0], soft_body.color[1], soft_body.color[2], 0.8)
+            else:
+                glColor4f(0.5, 0.5, 0.6, 0.3) # Subtle cross-bracing
+            glVertex3fv(p1)
+            glVertex3fv(p2)
+        glEnd()
+        
+        # 2. Render 3D Soft Voxel Nodes
+        glEnable(GL_LIGHTING)
+        for i, pos in enumerate(positions):
+            glPushMatrix()
+            glTranslatef(pos[0], pos[1], pos[2])
+            if is_selected:
+                glColor4f(1.0, 0.5, 0.0, 1.0)
+            else:
+                glColor4f(0.9, 0.9, 0.95, 0.9)
+            
+            # Render node sphere/cube voxel point
+            quad = gluNewQuadric()
+            gluSphere(quad, 0.05, 8, 8)
+            gluDeleteQuadric(quad)
+            glPopMatrix()
 
-    def draw_line(self, color, start_pos, end_pos, width=1):
-        try:
-            p1 = (int(start_pos[0]), int(start_pos[1]))
-            p2 = (int(end_pos[0]), int(end_pos[1]))
-            pygame.draw.line(self.surface, color, p1, p2, int(width))
-        except (TypeError, ValueError):
-            pass
-
-    def draw_circle(self, color, center_pos, radius, width=0):
-        try:
-            center = (int(center_pos[0]), int(center_pos[1]))
-            r = max(1, int(radius))
-            pygame.draw.circle(self.surface, color, center, r, int(width))
-        except (TypeError, ValueError):
-            pass
-
-    def draw_rect(self, color, rect, width=0, border_radius=0):
-        try:
-            r = pygame.Rect(int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
-            pygame.draw.rect(self.surface, color, r, int(width), border_radius=int(border_radius))
-        except (TypeError, ValueError):
-            pass
-
-    def draw_grid_and_axes(self, camera):
-        viewport = pygame.Rect(VIEWPORT_X, VIEWPORT_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)
-        spacing = GRID_SIZE * camera.zoom
-
-        if spacing >= 6:
-            ox = (camera.x * camera.zoom) % spacing
-            oy = (camera.y * camera.zoom) % spacing
-
-            x = viewport.left - spacing
-            while x < viewport.right + spacing:
-                sx = int(x + ox)
-                if viewport.left <= sx <= viewport.right:
-                    pygame.draw.line(self.surface, COLOR_GRID, (sx, viewport.top), (sx, viewport.bottom), 1)
-                x += spacing
-
-            y = viewport.top - spacing
-            while y < viewport.bottom + spacing:
-                sy = int(y + oy)
-                if viewport.top <= sy <= viewport.bottom:
-                    pygame.draw.line(self.surface, COLOR_GRID, (viewport.left, sy), (viewport.right, sy), 1)
-                y += spacing
-
-        # Draw World Coordinate Origin Axes
-        origin_sx = int((0.0 + camera.x) * camera.zoom) + VIEWPORT_X
-        origin_sy = int((0.0 + camera.y) * camera.zoom) + VIEWPORT_Y
-
-        if viewport.top <= origin_sy <= viewport.bottom:
-            pygame.draw.line(self.surface, COLOR_AXIS_X, (viewport.left, origin_sy), (viewport.right, origin_sy), 2)
-        if viewport.left <= origin_sx <= viewport.right:
-            pygame.draw.line(self.surface, COLOR_AXIS_Y, (origin_sx, viewport.top), (origin_sx, viewport.bottom), 2)
-
-    def draw_selection_gizmo(self, obj, camera):
-        if not obj or not getattr(obj, "visible", True):
-            return
-
-        aabb = obj.get_aabb()
-        if not aabb:
-            return
-
-        min_x, min_y, max_x, max_y = aabb
-
-        sx1 = int((min_x + camera.x) * camera.zoom) + VIEWPORT_X - 6
-        sy1 = int((min_y + camera.y) * camera.zoom) + VIEWPORT_Y - 6
-        sx2 = int((max_x + camera.x) * camera.zoom) + VIEWPORT_X + 6
-        sy2 = int((max_y + camera.y) * camera.zoom) + VIEWPORT_Y + 6
-
-        w = max(12, sx2 - sx1)
-        h = max(12, sy2 - sy1)
-
-        # Highlight Bounding Box
-        pygame.draw.rect(self.surface, COLOR_SELECTION, (sx1, sy1, w, h), 1)
-
-        # Corner Handles
-        handle_size = 6
-        for hx, hy in [(sx1, sy1), (sx1 + w, sy1), (sx1, sy1 + h), (sx1 + w, sy1 + h)]:
-            pygame.draw.rect(self.surface, COLOR_SELECTION, (hx - handle_size // 2, hy - handle_size // 2, handle_size, handle_size))
-
-    def draw_viewport_border(self):
-        viewport = pygame.Rect(VIEWPORT_X, VIEWPORT_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)
-        pygame.draw.rect(self.surface, COLOR_BORDER, viewport, 1)
+    def render_scene(self, camera, world, ui_manager=None):
+        """Main display routine: sets up 3D view and renders grid + assembled soft bodies."""
+        glClearColor(0.12, 0.13, 0.15, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        
+        # Setup camera matrices
+        glMatrixMode(GL_PROJECTION)
+        glLoadMatrixf(camera.get_projection_matrix().T)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadMatrixf(camera.get_view_matrix().T)
+        
+        # Render 3D spatial grid & ground plane
+        self.render_grid_3d()
+        
+        # Render all assembled soft bodies
+        for body in world.soft_bodies:
+            is_selected = (ui_manager and ui_manager.selected_object_id == body.id)
+            self.render_soft_body_3d(body, is_selected=is_selected)
 
 

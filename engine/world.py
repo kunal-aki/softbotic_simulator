@@ -1,179 +1,74 @@
-import math
-from physics.particle import Particle
-from physics.spring import Spring
+import numpy as np
 
-class World:
-    def __init__(self, width=1100, height=750):
-        self.sim_width = 3000
-        self.sim_height = 2000
-        self.sim_depth = 1000.0
-        self.particles = []
-        self.springs = []
+class World3D:
+    """3D Physics and Assembly Container for Soft Robotic Objects."""
+    def __init__(self, gravity=(0.0, -9.81, 0.0)):
+        self.gravity = np.array(gravity, dtype=np.float32)
         self.soft_bodies = []
-        self.obstacles = []
-        self.gravity = [0.0, 500.0, 0.0]
-        self.is_3d = False
-        self.next_particle_id = 0
+        self.floor_height = 0.0
+        self.weld_threshold = 0.15 # Max distance to automatically attach/assemble parts
 
-        self.grid_cell_size = 50.0
-        self.grid = {}
+    def add_soft_body(self, soft_body):
+        soft_body.snap_to_3d_grid()
+        self.soft_bodies.append(soft_body)
+        self.check_and_weld_assemblies(soft_body)
 
-    def add_particle(self, x, y, z=0.0, mass=1.0):
-        p = Particle(x, y, z, mass)
-        p.body_id = -1
-        p.id = self.next_particle_id
-        self.next_particle_id += 1
-        self.particles.append(p)
-        return p
+    def check_and_weld_assemblies(self, target_body):
+        """Assembles adjacent 3D objects together by fusing overlapping nodes."""
+        for body in self.soft_bodies:
+            if body.id == target_body.id:
+                continue
+            
+            # Check for close nodes and snap/weld them together
+            for i, p1 in enumerate(target_body.positions):
+                for j, p2 in enumerate(body.positions):
+                    dist = np.linalg.norm(p1 - p2)
+                    if dist < self.weld_threshold:
+                        # Fuse positions for a seamless structural assembly
+                        avg_pos = (p1 + p2) * 0.5
+                        target_body.positions[i] = avg_pos
+                        body.positions[j] = avg_pos
 
-    def add_spring(self, p1, p2, k=500.0, damping=5.0):
-        s = Spring(p1, p2, k, damping)
-        self.springs.append(s)
-        return s
-
-    def remove_particle(self, particle):
-        if particle in self.particles: 
-            self.particles.remove(particle)
-        self.springs = [s for s in self.springs if s.p1 != particle and s.p2 != particle]
-
-    def remove_obstacle(self, obs):
-        if obs in self.obstacles: 
-            self.obstacles.remove(obs)
-
-    def update_spatial_grid(self):
-        self.grid.clear()
-        for p in self.particles:
-            gx = int(p.pos[0] / self.grid_cell_size)
-            gy = int(p.pos[1] / self.grid_cell_size)
-            gz = int(p.pos[2] / self.grid_cell_size) if self.is_3d else 0
-            key = (gx, gy, gz)
-            if key not in self.grid:
-                self.grid[key] = []
-            self.grid[key].append(p)
-
-    def step(self, dt, substeps=8):
-        clamped_dt = min(dt, 0.016)
-        sdt = clamped_dt / substeps
-
-        for _ in range(substeps):
-            # 1. Apply environmental forces
-            for p in self.particles:
-                if not getattr(p, 'is_grabbed', False):
-                    p.apply_force((self.gravity[0] * p.mass, self.gravity[1] * p.mass, self.gravity[2] * p.mass))
-
-            # 2. Update spring physics
-            for s in self.springs: 
-                s.update()
-
-            # 3. Integrate particle positions
-            for p in self.particles: 
-                p.update(sdt)
-
-            # 4. Obstacle interactions
-            for obs in self.obstacles:
-                for p in self.particles:
-                    obs.resolve_collision(p, self.is_3d)
-
-            # 5. Boundary constraints
-            self.resolve_constraints()
-
-            # 6. Spatial particle-to-particle collision resolution
-            self.update_spatial_grid()
-            self.resolve_grid_collisions()
-
-            # 7. Rigid/Soft boundary projections & internal pressure
-            for sb in self.soft_bodies:
-                sb.apply_internal_pressure()
-                sb.maintain_volume()
-                sb.solve_inter_body_collisions()
-
-    def resolve_constraints(self):
-        floor, ceiling = self.sim_height - 100, 100
-        right_wall, left_wall = self.sim_width - 100, 100
-        front_wall, back_wall = self.sim_depth, -self.sim_depth
-
-        for p in self.particles:
-            if not self.is_3d:
-                p.pos[2] = 0.0
-                p.prev_pos[2] = 0.0
-
-            if p.pos[1] > floor:
-                p.pos[1] = floor
-                p.prev_pos[1] = floor + (p.pos[1] - p.prev_pos[1]) * 0.1
-            elif p.pos[1] < ceiling:
-                p.pos[1] = ceiling
-                p.prev_pos[1] = ceiling + (p.pos[1] - p.prev_pos[1]) * 0.1
-
-            if p.pos[0] > right_wall:
-                p.pos[0] = right_wall
-                p.prev_pos[0] = right_wall + (p.pos[0] - p.prev_pos[0]) * 0.1
-            elif p.pos[0] < left_wall:
-                p.pos[0] = left_wall
-                p.prev_pos[0] = left_wall + (p.pos[0] - p.prev_pos[0]) * 0.1
-
-            if self.is_3d:
-                if p.pos[2] > front_wall:
-                    p.pos[2] = front_wall
-                    p.prev_pos[2] = front_wall + (p.pos[2] - p.prev_pos[2]) * 0.1
-                elif p.pos[2] < back_wall:
-                    p.pos[2] = back_wall
-                    p.prev_pos[2] = back_wall + (p.pos[2] - p.prev_pos[2]) * 0.1
-
-    def resolve_grid_collisions(self):
-        # Separation radius to prevent mesh penetration
-        collision_radius = 28.0 if self.is_3d else 22.0
-        min_dist_sq = collision_radius * collision_radius
-        processed_pairs = set()
-
-        for cell_key, cell_particles in self.grid.items():
-            gx, gy, gz = cell_key
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    for dz in ([-1, 0, 1] if self.is_3d else [0]):
-                        neighbor_key = (gx + dx, gy + dy, gz + dz)
-                        if neighbor_key not in self.grid: 
-                            continue
-
-                        for p1 in cell_particles:
-                            for p2 in self.grid[neighbor_key]:
-                                if p1.body_id == p2.body_id or p1.body_id == -1 or p2.body_id == -1: 
-                                    continue
-
-                                pair_id = (min(p1.id, p2.id), max(p1.id, p2.id))
-                                if pair_id in processed_pairs: 
-                                    continue
-                                processed_pairs.add(pair_id)
-
-                                x_dist = p2.pos[0] - p1.pos[0]
-                                y_dist = p2.pos[1] - p1.pos[1]
-                                z_dist = (p2.pos[2] - p1.pos[2]) if self.is_3d else 0.0
-                                dist_sq = x_dist * x_dist + y_dist * y_dist + z_dist * z_dist
-
-                                if dist_sq < min_dist_sq:
-                                    dist = math.sqrt(dist_sq) if dist_sq > 0.0001 else 0.0001
-                                    nx, ny, nz = x_dist / dist, y_dist / dist, z_dist / dist
-
-                                    overlap = (collision_radius - dist) * 0.5
-                                    
-                                    p1_grabbed = getattr(p1, 'is_grabbed', False)
-                                    p2_grabbed = getattr(p2, 'is_grabbed', False)
-
-                                    if not getattr(p1, 'is_static', False) and not p1_grabbed:
-                                        p1.pos[0] -= nx * overlap
-                                        p1.pos[1] -= ny * overlap
-                                        p1.prev_pos[0] -= nx * overlap * 0.5
-                                        p1.prev_pos[1] -= ny * overlap * 0.5
-                                        if self.is_3d:
-                                            p1.pos[2] -= nz * overlap
-                                            p1.prev_pos[2] -= nz * overlap * 0.5
-
-                                    if not getattr(p2, 'is_static', False) and not p2_grabbed:
-                                        p2.pos[0] += nx * overlap
-                                        p2.pos[1] += ny * overlap
-                                        p2.prev_pos[0] += nx * overlap * 0.5
-                                        p2.prev_pos[1] += ny * overlap * 0.5
-                                        if self.is_3d:
-                                            p2.pos[2] += nz * overlap
-                                            p2.prev_pos[2] += nz * overlap * 0.5
+    def step(self, dt):
+        """Advances 3D mass-spring-damper physics simulation."""
+        for body in self.soft_bodies:
+            body.forces[:] = 0.0
+            
+            # Apply Gravity
+            for i in range(len(body.positions)):
+                body.forces[i] += self.gravity * body.masses[i]
+                
+            # Apply Spring Forces in 3D
+            for spring in body.springs:
+                i, j = spring['node1'], spring['node2']
+                p1, p2 = body.positions[i], body.positions[j]
+                v1, v2 = body.velocities[i], body.velocities[j]
+                
+                delta_p = p1 - p2
+                dist = np.linalg.norm(delta_p) + 1e-6
+                dir_p = delta_p / dist
+                
+                rest_len = spring.get('current_rest_length', spring['rest_length'])
+                
+                # Hooke's Law + Damping
+                f_spring = -body.material['stiffness'] * (dist - rest_len) * dir_p
+                f_damping = -body.material['damping'] * np.dot(v1 - v2, dir_p) * dir_p
+                
+                total_f = f_spring + f_damping
+                body.forces[i] += total_f
+                body.forces[j] -= total_f
+                
+            # Integration & 3D Floor Collisions
+            for i in range(len(body.positions)):
+                acc = body.forces[i] / body.masses[i]
+                body.velocities[i] += acc * dt
+                body.positions[i] += body.velocities[i] * dt
+                
+                # Ground Collision (XZ Floor)
+                if body.positions[i][1] < self.floor_height:
+                    body.positions[i][1] = self.floor_height
+                    body.velocities[i][1] *= -0.2 # Bounce damping
+                    body.velocities[i][0] *= 0.8  # Friction
+                    body.velocities[i][2] *= 0.8
 
 
